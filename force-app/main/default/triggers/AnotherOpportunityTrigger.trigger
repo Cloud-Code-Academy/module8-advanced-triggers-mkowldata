@@ -22,91 +22,122 @@ trigger AnotherOpportunityTrigger on Opportunity (before insert, after insert, b
     if (Trigger.isBefore){
         if (Trigger.isInsert){
             // Set default Type for new Opportunities
-            Opportunity opp = Trigger.new[0];
+            for(Opportunity opp : Trigger.new) {
             if (opp.Type == null){
                 opp.Type = 'New Customer';
-            }        
+                }    
+            }    
         } else if (Trigger.isDelete){
             // Prevent deletion of closed Opportunities
-            for (Opportunity oldOpp : Trigger.old){
+            for (Opportunity oldOpp : Trigger.old) {
                 if (oldOpp.IsClosed){
                     oldOpp.addError('Cannot delete closed opportunity');
                 }
             }
+        } else if (Trigger.isUpdate){
+            // Append Stage changes in Opportunity Description
+            for (Opportunity opp : Trigger.new) {
+                Opportunity oldOpp = Trigger.oldMap.get(opp.Id);
+                if (opp.StageName != null && opp.StageName != oldOpp.StageName) {
+                        opp.Description += '\n Stage Change:' + opp.StageName + ':' + DateTime.now().format();
+                    }
+                }                
         }
     }
-
     if (Trigger.isAfter){
         if (Trigger.isInsert){
             // Create a new Task for newly inserted Opportunities
-            for (Opportunity opp : Trigger.new){
+            List<Task> tasks = new List<Task>();
+            for (Opportunity opp : Trigger.new) {
                 Task tsk = new Task();
                 tsk.Subject = 'Call Primary Contact';
                 tsk.WhatId = opp.Id;
                 tsk.WhoId = opp.Primary_Contact__c;
                 tsk.OwnerId = opp.OwnerId;
-                tsk.ActivityDate = Date.today().addDays(3);
-                insert tsk;
+                tsk.ActivityDate = Date.today().addDays(3); 
+                tasks.add(tsk);
             }
-        } else if (Trigger.isUpdate){
-            // Append Stage changes in Opportunity Description
-            for (Opportunity opp : Trigger.new){
-                for (Opportunity oldOpp : Trigger.old){
-                    if (opp.StageName != null){
-                        opp.Description += '\n Stage Change:' + opp.StageName + ':' + DateTime.now().format();
-                    }
-                }                
-            }
-            update Trigger.new;
-        }
+            insert tasks;
+        
         // Send email notifications when an Opportunity is deleted 
-        else if (Trigger.isDelete){
-            notifyOwnersOpportunityDeleted(Trigger.old);
-        } 
+        } else if (Trigger.isDelete){
+            OpportunityHelper.notifyOwnersOpportunityDeleted(Trigger.old);
+        
         // Assign the primary contact to undeleted Opportunities
-        else if (Trigger.isUndelete){
-            assignPrimaryContact(Trigger.newMap);
+        } else if (Trigger.isUndelete){
+            OpportunityHelper.assignPrimaryContact(Trigger.newMap);
         }
     }
+}
 
     /*
     notifyOwnersOpportunityDeleted:
     - Sends an email notification to the owner of the Opportunity when it gets deleted.
     - Uses Salesforce's Messaging.SingleEmailMessage to send the email.
     */
-    private static void notifyOwnersOpportunityDeleted(List<Opportunity> opps) {
-        List<Messaging.SingleEmailMessage> mails = new List<Messaging.SingleEmailMessage>();
-        for (Opportunity opp : opps){
-            Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
-            String[] toAddresses = new String[] {[SELECT Id, Email FROM User WHERE Id = :opp.OwnerId].Email};
-            mail.setToAddresses(toAddresses);
-            mail.setSubject('Opportunity Deleted : ' + opp.Name);
-            mail.setPlainTextBody('Your Opportunity: ' + opp.Name +' has been deleted.');
-            mails.add(mail);
-        }        
-        
-        try {
-            Messaging.sendEmail(mails);
-        } catch (Exception e){
-            System.debug('Exception: ' + e.getMessage());
-        }
-    }
 
-    /*
-    assignPrimaryContact:
-    - Assigns a primary contact with the title of 'VP Sales' to undeleted Opportunities.
-    - Only updates the Opportunities that don't already have a primary contact.
-    */
-    private static void assignPrimaryContact(Map<Id,Opportunity> oppNewMap) {        
-        Map<Id, Opportunity> oppMap = new Map<Id, Opportunity>();
-        for (Opportunity opp : oppNewMap.values()){            
-            Contact primaryContact = [SELECT Id, AccountId FROM Contact WHERE Title = 'VP Sales' AND AccountId = :opp.AccountId LIMIT 1];
-            if (opp.Primary_Contact__c == null){
-                Opportunity oppToUpdate = new Opportunity(Id = opp.Id);
-                oppToUpdate.Primary_Contact__c = primaryContact.Id;
-                oppMap.put(opp.Id, oppToUpdate);
-            }
-        }
-        update oppMap.values();
-    }
-}
+    // private static void notifyOwnersOpportunityDeleted(List<Opportunity> opps) {
+    //     List<Messaging.SingleEmailMessage> mails = new List<Messaging.SingleEmailMessage>();
+    //     Set<Id> ownerIds = new Set<Id>();
+    //     for(Opportunity opp : opps) {
+    //         ownerIds.add(opp.OwnerId);
+    //     }
+    //     List<User> userList = [SELECT Id, Email FROM User WHERE Id IN :ownerIds];
+    //     Map<Id, User> userMap = new Map<Id, User>(); 
+    //     //put query of user list into map
+    //     for(User users : userList) {
+    //         userMap.put(users.Id, users);
+    //     }
+    //     for (Opportunity opp : opps){
+    //         Messaging.SingleEmailMessage mail = new Messaging.SingleEmailMessage();
+    //         String ownerEmail = userMap.get(opp.OwnerId).Email;
+    //         List<String> toAddresses = new List<String> {ownerEmail};
+    //         mail.setToAddresses(toAddresses);
+    //         mail.setSubject('Opportunity Deleted : ' + opp.Name);
+    //         mail.setPlainTextBody('Your Opportunity: ' + opp.Name +' has been deleted.');
+    //         mails.add(mail);
+    //     }        
+        
+    //     try {
+    //         Messaging.sendEmail(mails);
+    //     } catch (Exception e){
+    //         System.debug('Exception: ' + e.getMessage());
+    //     }
+    // }
+
+
+    // /*
+    // assignPrimaryContact:
+    // - Assigns a primary contact with the title of 'VP Sales' to undeleted Opportunities.
+    // - Only updates the Opportunities that don't already have a primary contact.
+    // // */
+    // private static void assignPrimaryContact(Map<Id,Opportunity> oppNewMap) {  
+    // //create set to capture Ids for each opp //loop through oppNewMap to pull accountId to add to set      
+        
+    //     Map<Id, Opportunity> oppMap = new Map<Id, Opportunity>();
+    //     Set<Id> oppAccountIds = new Set<Id>();
+    //     for (Opportunity opp : oppNewMap.values()) {
+    //         oppAccountIds.add(opp.AccountId);
+    //     }
+
+    //     //create list of primaryContacts outside of for loop //loop trhough primaryContact list to get accountId and contact to add to Map
+    //     List<Contact> primaryContact = [SELECT Id, AccountId FROM Contact WHERE Title = 'VP Sales' AND AccountId IN :oppAccountIds];
+    //     Map<Id, Contact> accountIdToContactMap = new Map<Id, Contact>(); //create map to capture accountId to contact
+    //     for (Contact cont : primaryContact) {
+    //         if(!accountIdToContactMap.containsKey(cont.AccountId)) {
+    //             accountIdToContactMap.put(cont.AccountId, cont);
+    //         }
+    //     }
+        
+    //     for (Opportunity opp : oppNewMap.values()){            
+    //         if (opp.Primary_Contact__c == null){
+    //             if(accountIdToContactMap.containsKey(opp.AccountId)) {
+    //             Opportunity oppToUpdate = new Opportunity(Id = opp.Id);
+    //             Contact primaryCont = accountidToContactMap.get(opp.AccountId);
+    //             oppToUpdate.Primary_Contact__c = primaryCont.Id;
+    //             oppMap.put(opp.Id, oppToUpdate);
+    //             }
+    //         }
+    //     }
+    //     update oppMap.values();
+
